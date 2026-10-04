@@ -40,6 +40,8 @@ from .openclaw_agent import (
     build_gateway_attachments_for_event,
     looks_like_json_reply,
 )
+from .deepseek_provider import DeepSeekProvider
+from .model_provider import ModelProvider, OpenClawProvider
 from .policy import PolicyEngine
 from .storage import SQLiteStore
 from .wecom_bridge import WeComBridge, WeComIncomingMessage
@@ -76,6 +78,7 @@ class ServiceState:
         fallback_text: str,
         image_no_text_reply: str,
         agent_invoker: OpenClawAgentInvoker | None,
+        model_provider: ModelProvider | None,
         tool_backend: ToolBackendService | None,
         worker_ocr_provider: str,
         worker_ocr_client: HermesOcrClient | None,
@@ -104,6 +107,7 @@ class ServiceState:
         self.fallback_text = fallback_text
         self.image_no_text_reply = image_no_text_reply
         self.agent_invoker = agent_invoker
+        self.model_provider = model_provider
         self.tool_backend = tool_backend
         self.worker_ocr_provider = (worker_ocr_provider or "").strip().lower()
         self.worker_ocr_client = worker_ocr_client
@@ -1235,7 +1239,8 @@ def create_app() -> FastAPI:
         )
 
     agent_invoker: OpenClawAgentInvoker | None = None
-    if decision_mode == "agent":
+    model_provider: ModelProvider | None = None
+    if decision_mode in {"agent", "openclaw"}:
         openclaw_bin = os.getenv("CLAWBOT_OPENCLAW_BIN", "openclaw")
         openclaw_agent_id = os.getenv("CLAWBOT_OPENCLAW_AGENT_ID", "kefu_ops").strip() or "kefu_ops"
         openclaw_timeout_sec = _safe_float(os.getenv("CLAWBOT_OPENCLAW_TIMEOUT_SEC"), default=120.0)
@@ -1251,6 +1256,14 @@ def create_app() -> FastAPI:
             use_local=openclaw_local,
             attachment_max_bytes=openclaw_attachment_max_bytes,
         )
+        model_provider = OpenClawProvider(agent_invoker)
+    elif decision_mode == "deepseek":
+        model_provider = DeepSeekProvider(
+            api_key=os.getenv("CLAWBOT_DEEPSEEK_API_KEY", ""),
+            base_url=os.getenv("CLAWBOT_DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+            model=os.getenv("CLAWBOT_DEEPSEEK_MODEL", "deepseek-chat"),
+            timeout_sec=_safe_float(os.getenv("CLAWBOT_DEEPSEEK_TIMEOUT_SEC"), default=60.0),
+        )
 
     app = FastAPI(title="kefu-clawbot", version=__version__)
     app.state.service = ServiceState(
@@ -1261,6 +1274,7 @@ def create_app() -> FastAPI:
         fallback_text=fallback_text,
         image_no_text_reply=image_no_text_reply,
         agent_invoker=agent_invoker,
+        model_provider=model_provider,
         tool_backend=tool_backend,
         worker_ocr_provider=worker_ocr_provider,
         worker_ocr_client=worker_ocr_client,
@@ -2094,14 +2108,44 @@ def _decide(
             extra={"strategy": "agent", "trace_id": trace_id},
         )
 
-    if service.agent_invoker is None:
-        raise RuntimeError("agent_invoker_not_configured")
+    if service.model_provider is None:
+        raise RuntimeError("model_provider_not_configured")
+
+    if service.decision_mode == "deepseek":
+        return _decide_via_model_provider(
+            service=service, event=event, category_result=category_result, trace_id=trace_id
+        )
 
     return _decide_via_openclaw_single(
         service=service,
         event=event,
         category_result=category_result,
         trace_id=trace_id,
+    )
+
+
+def _decide_via_model_provider(
+    *, service: ServiceState, event: IncomingEvent, category_result: CategoryResult, trace_id: str
+) -> DecisionInternal:
+    provider = service.model_provider
+    if provider is None:
+        raise RuntimeError("model_provider_not_configured")
+    try:
+        history = service.store.recent_dialogue(event.session_key(), limit=8)
+    except Exception:
+        history = []
+    reply = provider.reply(event, history=history)
+    cleaned, image_urls = _extract_image_urls_from_text(reply.text)
+    return DecisionInternal(
+        action="send" if cleaned or image_urls else "skip",
+        reply_text=cleaned,
+        reason="deepseek_reply",
+        category=category_result.category,
+        confidence=category_result.confidence,
+        amount=0.0,
+        need_more=False,
+        manual=False,
+        extra={"strategy": provider.name, "trace_id": trace_id, "image_urls": image_urls},
     )
 
 
@@ -2379,7 +2423,9 @@ def _normalize_trace_id(trace_id: str | None) -> str:
 
 def _normalize_decision_mode(raw: str | None) -> str:
     value = (raw or "").strip().lower()
-    if value in {"policy", "agent"}:
+    if value == "openclaw":
+        return "agent"
+    if value in {"policy", "agent", "deepseek"}:
         return value
     return "agent"
 
