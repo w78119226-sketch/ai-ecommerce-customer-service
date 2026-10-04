@@ -13,6 +13,7 @@ authors = [{ name = "Wei Zhang" }]
 dependencies = [
   "fastapi>=0.115,<1.0",
   "Pillow>=10.0,<13.0",
+  "PySide6>=6.7,<7.0",
   "playwright>=1.40,<2.0",
   "pydantic>=2.8,<3.0",
   "pycryptodome>=3.20,<4.0",
@@ -38,6 +39,7 @@ dxl-identity-service = "kefu_identity_service.__main__:main"
 dxl-offline-demo = "dxl_agent.__main__:main"
 dxl-agent-eval = "dxl_agent.eval_runner:main"
 dxl-agent-channel-demo = "dxl_agent.channel_demo:main"
+dxl-commerce-desktop = "kefu_desktop.main:main"
 
 [tool.hatch.build.targets.wheel]
 packages = [
@@ -45,6 +47,7 @@ packages = [
   "src/kefu_clawbot",
   "src/kefu_tool_backend",
   "src/kefu_identity_service",
+  "src/kefu_desktop",
   "workers",
 ]
 

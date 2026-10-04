@@ -69,6 +69,12 @@ pydantic-core==2.46.4
     # via pydantic
 pyee==13.0.1
     # via playwright
+pyside6==6.11.2
+    # via dxl-commerce-agent (pyproject.toml)
+pyside6-addons==6.11.2
+    # via pyside6
+pyside6-essentials==6.11.2
+    # via pyside6
 pygments==2.20.0
     # via pytest
 pytest==8.4.2
@@ -88,6 +94,8 @@ pyyaml==6.0.3
     # via
     #   dxl-commerce-agent (pyproject.toml)
     #   uvicorn
+shiboken6==6.11.2
+    # via pyside6
 ruff==0.16.3
     # via dxl-commerce-agent (pyproject.toml)
 starlette==1.6.0
